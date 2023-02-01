@@ -1,0 +1,253 @@
+---
+title: "Impact of severe weather events on Public Health and Economy"
+date: "2023-01-31"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Synopsis
+
+In this report we aim to give an overview over storm related damages to human life and the economy in the US over the time period from 1995-2011. We obtained a data set from the National Weather Service. We decided not to include earlier years (available data starts in 1950), since these data entries were considered incomplete due to fewer recordings.
+After analysis, we concluded that Tornadoes are the most harmful storm related event to human life, while floods cause the most economic damage.
+
+
+### Used packages
+```{r, message=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+```
+
+# Data Processing
+
+### Downloading and Reading in the Data
+
+```{r}
+
+destfile <- './data/stormdata.csv.bz2'
+    if (!file.exists(destfile))
+        {
+        if(!file.exists("./data")){dir.create("./data")}
+        fileurl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+        download.file(fileurl, destfile = "./data/stormdata.csv.bz2")
+        }
+
+StormData <-  read.csv("./data/stormdata.csv.bz2")
+```
+
+**Getting an overview of the data**
+
+```{r echo = TRUE}
+ str(StormData)
+
+```
+
+**We need to address the following issues:** 
+
+1. According to the instructions, earlier years may not hold highly representative data. Let's check the data volume first. 
+2. We only need some of the columns to answer our questions.
+
+### Data Quality
+
+**Checking the data quality of earlier years**
+```{r}
+StormData$year <- as.numeric(format(as.Date(StormData$BGN_DATE, format = "%m/%d/%Y %H:%M:%S"), "%Y"))
+
+hist(StormData$year, breaks = 30)
+                
+```
+
+Data volume seems to pick up in the mid 90s. Let's only use data starting from 1995.
+```{r}
+        Storm95 <- subset(StormData, year >= 1995)
+
+```
+
+### Simplifying Data
+
+**Sub-setting our data set to only include necessary columns**
+
+We're interested in: 
+
+ * damages to human life("FATALITIES" & "INJURIES") 
+ * economic damages ("PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP") 
+ * sorted by type of event ("EVTYPE")
+
+```{r}
+
+StormCol <- Storm95[, c('EVTYPE',
+                        'FATALITIES',
+                        'INJURIES',
+                        'PROPDMG',
+                        'PROPDMGEXP',
+                        'CROPDMG', 
+                        'CROPDMGEXP')]
+
+```
+
+We can also exclude all rows that only contain the value "0" to simplify our data set. 
+
+```{r}
+StormClean <- subset(StormCol, INJURIES > 0 | FATALITIES > 0 | PROPDMG > 0 | CROPDMG > 0)
+
+```
+
+Let's have a look at our data set so far.
+```{r}
+str(StormClean)
+```
+
+**Exponents** \
+Another issue becomes clear: The two columns containing the exponents for the economic costs ("PROPDMGEXP", "CROPDMGEXP") don't contain numeric values. This needs to be changed for further calculations.
+
+```{r}
+### List all Exponents used in PROPDMGEXP
+unique(StormClean$PROPDMGEXP)
+```
+
+**Deal with PropExp**
+```{r}
+### Create a data frame containing a value code that we can then use to merge our data.
+PropOldEx <- c("B", "M", "K", "\"\"", "+", "5", "0", "6", "4", "2", "7", "3", "H", "-")
+PropNewEx <- c(10^9, 10^6, 10^3, 10^0, 10^0, 10^5, 10^0, 10^6, 10^4, 10^2, 10^7, 10^3, 10^2, 10^0)
+
+MergePropTable <- data.frame(PropNewEx, PropOldEx)
+MergePropTable
+
+### Merge the old df with the created MergePropTable to create a new df that contains the new exponents.
+StormPropExp <- merge(StormClean, MergePropTable, 
+                      by.x = "PROPDMGEXP", by.y = "PropOldEx")
+
+### Delete the old PROPDMGEXP-column
+StormPropExp <- subset(StormPropExp, select = -PROPDMGEXP) 
+
+```
+
+**Deal with CropExp**
+
+```{r}
+### List all Exponents used in CROPDMGEXP
+unique(StormClean$CROPDMGEXP)
+```
+
+This employs exactly the same strategy as for the Property columns. 
+
+```{r}
+CropOldEx <- c("M", "\"\"", "K", "B", "?", "k", "0")
+CropNewEx <- c(10^6, 10^0, 10^3, 10^9, 10^0, 10^0, 10^0)
+
+MergeCropTable <- data.frame(CropNewEx, CropOldEx)
+
+StormCropEx <- merge(StormPropExp, MergeCropTable, 
+                     by.x = "CROPDMGEXP", by.y = "CropOldEx")
+StormCropEx <- subset(StormCropEx, select = -CROPDMGEXP) 
+```
+
+To finish Data Processing, we  rearrange the columns, so that the corresponding cost-column and exponent-column are side by side.
+```{r}
+StormAnalysis <- StormCropEx[, c(1,2,3,4,6,5,7)]
+head(StormAnalysis)
+```
+
+
+# Results
+
+After processing the data, we can finally start to address the questions:
+
+### Question 1: Across the United States, which types of events are most harmful with respect to population health?
+
+We aggregated both the fatality and the injury values by event type. We then added the respective values to create a new "TotalHarm" column, which we used to order the events.
+```{r}
+### Aggregate by event type
+StormHarm <- aggregate(cbind(FATALITIES, INJURIES) ~ EVTYPE , StormAnalysis, sum)
+
+### Add injuries and fatalities to new TotalHarm column
+StormHarm <- StormHarm %>%
+        mutate(TotalHarm = FATALITIES + INJURIES)
+
+### Sort events by most harmful.
+StormHarm <- arrange(StormHarm, -TotalHarm)
+```
+
+Since there are still a lot of event types and we want to know which are the most harmful, we took only the TOP 8 rows.
+```{r}
+StormPlot <- StormHarm[(1:8), ]
+head(StormPlot)
+```
+
+We are then ready to plot our graph.
+```{r, warning=FALSE}
+### Melt the columns by event type.
+StormPlot <- melt(StormPlot, id.vars="EVTYPE", variable.name = "Harm")
+
+### Using geom_bar to plot the data.
+ggplot(StormPlot, aes( x = reorder(EVTYPE, value), value)) +
+        geom_bar(stat="identity", aes(fill=Harm), position="dodge") +
+        ggtitle ("Storm Damage affecting Human Life in US (TOP8, 1995-2011)") +
+        ylab("Count") +
+        xlab ("Harmfull Event") + 
+        theme(legend.position = "top" ,axis.text.x = element_text(angle=30, hjust=1)) + 
+        scale_fill_manual("legend", 
+                          values = c("FATALITIES" = "black", "INJURIES" = "red", "TotalHarm" = "blue"))
+```
+
+### Result Question 1
+
+It is evident that Tornadoes cause by far the most Harm to Human life in the time frame across the US. Both their death count and injury count are higher compared to the other categories. Floods cause the second most harm. The third most harmful event, Thunderstorm Winds, causes significantly less harm than the first two events. It also stands out that Flash Floods have a relatively high death count, compared to other categories, albeit lower than Tornadoes.
+
+
+
+### Question 2 :Across the United States, which types of events have the greatest economic consequences?
+
+To answer this question, we first need to multiply the cost columns with their respective exponent columns.
+```{r}
+StormEcon <- StormAnalysis %>%
+        mutate(PropCost = PROPDMG * PropNewEx,
+               CropCost = CROPDMG * CropNewEx
+        )
+```
+
+We then, again, aggregated Property Costs and Crop Costs by event type, created a TotalDamage column using their sums, and ordered the columns.
+```{r}
+### Aggregate by event type
+
+StormEconAg <- aggregate(cbind(PropCost, CropCost) ~ EVTYPE , StormEcon, sum)        
+### Add Crop and Prop Costs to new TotalDmg column.
+
+StormEcoDmg <- StormEconAg %>%
+        mutate(TotalDmg = PropCost + CropCost)
+
+### Sort events by most damaging.
+StormEcoDmg <- arrange(StormEcoDmg, -TotalDmg)
+
+### Only include the Top 8.
+StormPlot2 <- StormEcoDmg[(1:8), ]
+
+head(StormPlot2)
+
+```
+
+We then plotted the data.
+```{r, warning=FALSE}
+### Melt the columns by event type.
+
+StormPlot2 <- melt(StormPlot2, id.vars="EVTYPE", variable.name = "Damage")
+
+### Plot using geom_bar.
+ggplot(StormPlot2, aes( x = reorder(EVTYPE, value), value)) +
+        geom_bar(stat="identity", aes(fill=Damage), position="dodge") +
+        ggtitle ("Storm Damage to the Economy in US (TOP8, 1995-2011)") +
+        ylab("Cost(Dollars)") +
+        xlab ("Harmfull Event") + 
+        theme(legend.position = "top" ,axis.text.x = element_text(angle=30, hjust=1)) + 
+        scale_fill_manual("legend", 
+                          values = c("CropCost" = "black", "PropCost" = "red", "TotalDmg" = "blue")) 
+```
+
+### Results Question 2
+
+The most harmful storm event concerning the economic parameters in the time frame across the US are clearly floods. Their damage to property is clearly causing the most damage over all. Floods are also responsible for the most Crop Costs compared to the other Top 7 events, but this number is much lower than the damage to property. A noticeable trend is, that in all categories, Property Costs are a lot higher than Crop Cost.
+

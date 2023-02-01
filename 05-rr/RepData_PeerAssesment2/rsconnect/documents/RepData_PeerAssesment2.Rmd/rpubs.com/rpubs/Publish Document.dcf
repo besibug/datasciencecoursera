@@ -1,0 +1,11 @@
+name: Publish Document
+title:
+username:
+account: rpubs
+server: rpubs.com
+hostUrl: rpubs.com
+appId: https://api.rpubs.com/api/v1/document/997873/0fdad79d809a49c2aa046162f406a20c
+bundleId: https://api.rpubs.com/api/v1/document/997873/0fdad79d809a49c2aa046162f406a20c
+url: http://rpubs.com/besibug/997873
+when: 1675291300.18735
+lastSyncTime: 1675291300.18736
